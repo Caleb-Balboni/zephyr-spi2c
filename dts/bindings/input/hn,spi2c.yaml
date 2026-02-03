@@ -6,7 +6,7 @@ include: base.yaml
 
 properties:
   i2c-devs:
-    type: phandle-array
+    type: phandles
     required: true
     description: a list of all i2c devices this driver can interact with
   i2c-dev-num:
