@@ -40,8 +40,8 @@ typedef enum {
 
 struct spi2c_com_cfg {
 	uint8_t i2c_dev_num; // the number of i2c devices
-	const i2c_dt_spec i2c_devs[MAX_I2C_DEVS]; // i2c devices
-	const spi_dt_spec spi_dev; // spi
+	const struct i2c_dt_spec i2c_devs[MAX_I2C_DEVS]; // i2c devices
+	const struct spi_dt_spec spi_dev; // spi
 };
 
 struct spi2c_com_data {
