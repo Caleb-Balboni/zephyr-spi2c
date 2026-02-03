@@ -175,6 +175,7 @@ static int spi2c_begin_impl(const struct device* dev) {
 	if (data->d_stat == SPI2C_INIT) {
 		return SPI2C_INIT; // thread already started
 	}
+	struct k_thread cmd_thread;
 	k_thread_create(&cmd_thread,
 			cmd_stack,
 			K_THREAD_STACK_SIZEOF(cmd_stack),
