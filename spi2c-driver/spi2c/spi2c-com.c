@@ -201,31 +201,31 @@ static const struct spi2c_driver spi2c_driver_impl = {
 #define SPI2C_I2C_ELEM_TO_SPEC(inst, prop, idx) \
 	[idx] = I2C_DT_SPEC_GET(DT_INST_PROP_BY_IDX(inst, prop, idx)),
 
-#define SPI2C_DEFINE(inst)                                        \
-	static struct spi2c_com_data spi2c_com_data_##inst = {          \
-		.d_stat = SPI2C_UNINIT,                                       \
-		.c_stat = SPI2C_SUCCESS,                                      \
-		.rx_reg = {0},                                                \
-	};                                                              \
-                                                                  \
-	BUILD_ASSERT(DT_INST_PROP_LEN(inst, i2c_devs) <= MAX_I2C_DEVS,  \
-		     "i2c-devs has more than MAX_I2C_DEVS entries");          \
-                                                                  \
-	static const struct spi2c_com_cfg spi2c_com_cfg_##inst = {      \
-		.i2c_dev_num = (uint8_t)DT_INST_PROP_LEN(inst, i2c_devs),     \
-		.i2c_devs = {                                                 \
-			DT_INST_FOREACH_PROP_ELEM(inst, i2c_devs,                   \
-						  SPI2C_I2C_ELEM_TO_SPEC)                             \
-		},                                                            \
-		.spi_dev = SPI_DT_SPEC_INST_GET(inst, SPI_OP, 0),             \
-	};                                                              \
-                                                                  \
-	DEVICE_DT_INST_DEFINE(inst,                                     \
-			      NULL, NULL,                                           \
-			      &spi2c_com_data_##inst,                               \
-			      &spi2c_com_cfg_##inst,                                \
-			      POST_KERNEL,                                          \
-			      CONFIG_KERNEL_INIT_PRIORITY_DEVICE,                   \
-			      &spi2c_driver_impl);                                  \
+#define SPI2C_DEFINE(inst)                                                \
+	static struct spi2c_com_data spi2c_com_data_##inst = {                  \
+		.d_stat = SPI2C_UNINIT,                                               \
+		.c_stat = SPI2C_SUCCESS,                                              \
+		.rx_reg = {0},                                                        \
+	};                                                                      \
+                                                                          \
+	BUILD_ASSERT(DT_INST_PROP_LEN(inst, i2c_devs) <= MAX_I2C_DEVS,          \
+		     "i2c-devs has more than MAX_I2C_DEVS entries");                  \
+                                                                          \
+	static const struct spi2c_com_cfg spi2c_com_cfg_##inst = {              \
+		.i2c_dev_num = (uint8_t)DT_INST_PROP_LEN(inst, i2c_devs),             \
+		.i2c_devs = {                                                         \
+			DT_INST_FOREACH_PROP_ELEM(inst, i2c_devs,                           \
+						  SPI2C_I2C_ELEM_TO_SPEC)                                     \
+		},                                                                    \
+		.spi_dev = SPI_DT_SPEC_GET(DT_INST_PHANDLE(inst, spi_dev), SPI_OP),   \
+	};                                                                      \
+                                                                          \
+	DEVICE_DT_INST_DEFINE(inst,                                             \
+			      NULL, NULL,                                                   \
+			      &spi2c_com_data_##inst,                                       \
+			      &spi2c_com_cfg_##inst,                                        \
+			      POST_KERNEL,                                                  \
+			      CONFIG_KERNEL_INIT_PRIORITY_DEVICE,                           \
+			      &spi2c_driver_impl);                                          \
 
 DT_INST_FOREACH_STATUS_OKAY(SPI2C_DEFINE)
