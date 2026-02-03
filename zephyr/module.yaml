@@ -1,0 +1,6 @@
+name: spi2c
+build:
+  cmake: .
+  kconfig: Kconfig
+  settings:
+    dts_root: .

@@ -1,0 +1,9 @@
+config HN_SPI2C
+	bool "spi transceiver for i2c communication"
+	default n
+	depends on SPI
+	depends on SPI_SLAVE
+	depends on !SPI_NXP_LPSPI_DMA
+	depends on !SPI_ASYNC
+	help
+		enables the spi2c driver which automatically handles receiving and sending data from i2c devices
