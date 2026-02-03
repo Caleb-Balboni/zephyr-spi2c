@@ -36,6 +36,17 @@ static const struct i2c_dt_spec* match_i2c_dt_adr(struct spi2c_com_cfg* cfg, uin
 	return NULL;
 }
 
+static int spi2c_transcieve_helper(const struct spi_dt_spec* dev, struct uint8_t* rx_data, size_t rx_size, uint8_t* tx_data, size_t tx_size) {
+	struct spi_buf_set buf_set_rx;
+	struct spi_buf buf_rx;
+	init_buffer(&buf_set_rx, &buf_rx, rx_size, rx_data);
+	struct spi_buf_set buf_set_tx;
+	struct spi_buf buf_tx;
+	init_buffer(&buf_set_tx, &buf_tx, tx_size, tx_data);
+
+	return spi_transceive_dt(dev, &buf_set_tx, &buf_set_rx);
+}
+
 // CMD: 0x00
 int spi2c_write(const struct device* dev, uint8_t cmd_data[3]) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
@@ -45,15 +56,10 @@ int spi2c_write(const struct device* dev, uint8_t cmd_data[3]) {
 	uint8_t i2c_adr = cmd_data[2];
 
 	uint8_t data_buf_rx[size];
-	struct spi_buf_set buf_set_rx;
-	struct spi_buf buf_rx;
-	init_buffer(&buf_set_rx, &buf_rx, size, data_buf_rx);
 	uint8_t data_buf_tx[size];
-	struct spi_buf_set buf_set_tx;
-	struct spi_buf buf_tx;
-	init_buffer(&buf_set_tx, &buf_tx, size, data_buf_tx);
-
-	spi_transceive_dt(&cfg->spi_dev, &buf_set_tx, &buf_set_rx);
+  if (spi2c_transcieve_helper(&cfg->spi_dev, data_buf_rx, size, data_buf_tx, size)) {
+    return SPI2C_SPI_RWERR;
+  }
 	const struct i2c_dt_spec* i2c_dev = match_i2c_dt_adr(cfg, i2c_adr);
 	if (i2c_dev == NULL) { return SPI2C_NO_BUS; }
 	if (i2c_write_dt(i2c_dev, data_buf_rx, size)) { return SPI2C_I2C_RWERR; }
@@ -84,16 +90,10 @@ int spi2c_read_rx(const struct device* dev, uint8_t cmd_data[3]) {
 	size_t size = (size_t)cmd_data[1];
 
 	uint8_t data_buf_rx[size];
-	struct spi_buf_set buf_set_rx;
-	struct spi_buf buf_rx;
-	init_buffer(&buf_set_rx, &buf_rx, size, data_buf_rx);
 	uint8_t data_buf_tx[size];
 	memcpy(data_buf_tx, data->rx_reg, size);
-	struct spi_buf_set buf_set_tx;
-	struct spi_buf buf_tx;
-	init_buffer(&buf_set_tx, &buf_tx, size, data_buf_tx);
 
-	if (spi_transceive_dt(&cfg->spi_dev, &buf_set_tx, &buf_set_rx)) {
+	if (spi2c_transcieve_helper(&cfg->spi_dev, data_buf_rx, size, data_buf_tx, size)) {
 		return SPI2C_SPI_RWERR;
 	}
 	return SPI2C_SUCCESS;
@@ -118,14 +118,8 @@ int spi2c_read_reg(const struct device* dev, uint8_t cmd_data[3]) {
 	uint8_t reg = cmd_data[1];
 
 	uint8_t data_buf_tx = get_reg_data(data, reg);
-	struct spi_buf_set buf_set_tx;
-	struct spi_buf buf_tx;
-	init_buffer(&buf_set_tx, &buf_tx, 1, &data_buf_tx);
 	uint8_t data_buf_rx = 0;
-	struct spi_buf_set buf_set_rx;
-	struct spi_buf buf_rx;
-	init_buffer(&buf_set_rx, &buf_rx, 1, &data_buf_rx);
-	if (spi_transceive_dt(&cfg->spi_dev, &buf_set_tx, &buf_set_rx)) {
+	if (spi2c_transcieve_helper(&cfg->spi_dev, data_buf_rx, 1, data_buf_tx, 1)) {
 		return SPI2C_SPI_RWERR;
 	}
 	return SPI2C_SUCCESS;
@@ -162,7 +156,7 @@ void spi2c_cmd_thread(void* p1, void* p2, void* p3) {
 	}
 }
 
-K_THREAD_STACK_DEFINE(cmd_stack, 1024)
+K_THREAD_STACK_DEFINE(cmd_stack, 2048)
 static struct k_thread cmd_thread;
 
 static int spi2c_begin_impl(const struct device* dev) {
@@ -181,7 +175,6 @@ static int spi2c_begin_impl(const struct device* dev) {
 	if (data->d_stat == SPI2C_INIT) {
 		return SPI2C_INIT; // thread already started
 	}
-	struct k_thread cmd_thread;
 	k_thread_create(&cmd_thread,
 			cmd_stack,
 			K_THREAD_STACK_SIZEOF(cmd_stack),
