@@ -4,7 +4,7 @@
 #include <zephyr/drivers/spi.h>
 #include <zephyr/drivers/i2c.h>
 #include <zephyr/kernel.h>
-#include <zerphyr/device.h>
+#include <zephyr/device.h>
 
 #define MAX_I2C_DEVS 8
 
