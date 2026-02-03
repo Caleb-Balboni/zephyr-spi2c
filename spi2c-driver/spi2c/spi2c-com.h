@@ -85,4 +85,9 @@ struct spi2c_driver {
 	spi2c_begin_t spi2c_begin;
 };
 
+static inline int spi2c_begin_com(const struct device* dev) {
+  struct spi2c_driver* api = (struct spi2c_driver*)dev->api;
+  return api->spi2c_begin(dev);
+}
+
 #endif
