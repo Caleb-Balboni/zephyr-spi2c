@@ -38,7 +38,7 @@ static void slave_packet_create(struct packet* out, uint8_t seq, uint16_t size, 
   out->initiator = 1;
   out->size = size;
   memcpy(out->data, data, size);
-  out->crc = preform_crc8(out);
+  out->crc8 = preform_crc8(out);
   return;
 }
 
@@ -109,10 +109,11 @@ void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* 
 	if (i2c_read_dt(i2c_dev, (uint8_t*)(read_buf + 1), size)) { 
     code = SPI2C_I2C_RWERR;
     goto create_err_packet;
+  } else {
+    read_buf[0] = code;
+    slave_packet_create(out, in->seqnum, size + 1, read_buf);
+    return;
   }
-  read_buf[0] = code;
-  slave_packet_create(out, in->seqnum, size + 1, read_buf);
-  return;
 
   create_err_packet:
   slave_packet_create(out, in->seqnum, 1, &code);
