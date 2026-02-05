@@ -94,6 +94,7 @@ void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* 
 
   uint8_t code = SPI2C_SUCCESS;
   uint8_t size = *(uint8_t*)(in->data + 3);
+	uint8_t read_buf[size + 1];
   if (size != 3) {
     code = SPI2C_INMEM;
     goto create_err_packet;
@@ -105,15 +106,13 @@ void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* 
     goto create_err_packet;
   }
 
+  read_buf[0] = code;
 	if (i2c_read_dt(i2c_dev, (uint8_t*)(read_buf + 1), size)) { 
     code = SPI2C_I2C_RWERR;
     goto create_err_packet;
-  } else {
-	  uint8_t read_buf[size + 1];
-    read_buf[0] = code;
-    slave_packet_create(out, in->seqnum, size + 1, read_buf);
-    return;
   }
+  slave_packet_create(out, in->seqnum, size + 1, read_buf);
+  return;
 
   create_err_packet:
   slave_packet_create(out, in->seqnum, 1, &code);
