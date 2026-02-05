@@ -3,6 +3,7 @@ config HN_SPI2C
 	default n
 	depends on SPI
 	depends on SPI_SLAVE
+  depends on GPIO
 	depends on !SPI_NXP_LPSPI_DMA
 	depends on !SPI_ASYNC
 	help

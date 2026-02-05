@@ -12,6 +12,14 @@
 
 #define THREAD_S_SIZE 1024
 
+K_THREAD_STACK_DEFINE(transceive_stack, THREAD_S_SIZE)
+static struct k_thread transceive_thread;
+K_MSGQ_DEFINE(spi_queue, MAX_PACKET_SIZE, 128, 4);
+
+K_THREAD_STACK_DEFINE(cmd_handler_stack, THREAD_S_SIZE)
+static struct k_thread cmd_handler_thread;
+K_MSGQ_DEFINE(cmd_queue, sizeof(void*), 128, 4);
+
 static void init_buffer(struct spi_buf_set* buf_set, struct spi_buf* buf, size_t len, void* data) {
 	buf->buf = data;
 	buf->len = len;
@@ -20,8 +28,18 @@ static void init_buffer(struct spi_buf_set* buf_set, struct spi_buf* buf, size_t
 	return;
 }
 
-static int test_crc(struct packet* p) {
+// return the crc of the packet
+static int preform_crc8(struct packet* p) {
   return 0; // for now the packet is always correct
+}
+
+static void slave_packet_create(struct packet* out, uint8_t seq, uint16_t size, uint8_t* data) {
+  out->seqnum = seq;
+  out->initiator = 1;
+  out->size = size;
+  memcpy(out->data, data, size);
+  out->crc = preform_crc8(out);
+  return;
 }
 
 // tries to find a i2c device that corresponds with the given i2c address
@@ -36,70 +54,124 @@ static const struct i2c_dt_spec* match_i2c_dt_adr(struct spi2c_com_cfg* cfg, uin
 	return NULL;
 }
 
-static uint8_t get_reg_data(struct spi2c_com_data* data, uint8_t reg) {
+static uint8_t* get_reg_data(struct spi2c_com_data* data, uint8_t reg) {
 	switch(reg) {
 		case SPI2C_DSTAT_REG:
-			return data->d_stat;
-		case SPI2C_CSTAT_REG:
-			return data->c_stat;
+			return &data->d_stat;
 		default:
-			return 0;
+			return NULL;
 	}
 }
 
-int spi2c_i2c_write(const struct device* dev, struct packet* in) {
+// incoming packet fmt of i2c cmd write --> |packet header|CMD:0x00 (1 byte)|i2c adr (1 byte)| write data (header.size - 2 bytes)| 
+// outgoing packet fmt of i2c cmd write --> |packet header|ERR CODE (1 byte)|
+void spi2c_i2c_write(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-	if (int->cmd != SPI2C_I2C_WRITE) { return -1; }
-  
-  uint8_t i2c_adr = in->data[0];
+
+  uint8_t code = SPI2C_SUCCESS;
+  uint8_t i2c_adr = *(uint8_t*)(in->data + 1);
 	const struct i2c_dt_spec* i2c_dev = match_i2c_dt_adr(cfg, i2c_adr);
-	if (i2c_dev == NULL) { return SPI2C_NO_BUS; }
-	if (i2c_write_dt(i2c_dev, (uint8_t*)(data + 1), in->size - 1)) { return -1; }
-	return 0;
+	if (i2c_dev == NULL) { 
+    code = SPI2C_NO_BUS;
+    goto create_err_packet;
+  }
+  uint8_t* w_data = (uint8_t*)(in->data + 2); // beginning of data to write
+  uint8_t w_data_size = in->size - 2;
+	if (i2c_write_dt(i2c_dev, w_data, w_data_size)) { 
+    code = SPI2C_I2C_RWERR;
+  }
+  create_err_packet:
+  slave_packet_create(out, in->seqnum, 1, &code);
+  return;   
 }
 
-int spi2c_i2c_load_helper(const struct device* dev, uint8_t i2c_adr, size_t data_size) {
+// incoming packet fmt of i2c cmd read --> |packet header|CMD:0x01 (1 byte)|i2c adr (1 byte)|read size (1 byte)| 
+// outgoing packet fmt of i2c cmd read --> |packet header|ERR CODE (1 byte)|read data (header.size - 1 bytes)|
+void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-	if (cmd_data[0] != SPI2C_CMD_READ) { return SPI2C_SPI_RWERR; }
-	size_t size = (size_t)cmd_data[1];
-	uint8_t i2c_adr = cmd_data[2];
 
+  uint8_t code = SPI2C_SUCCESS;
+  uint8_t size = *(uint8_t*)(in->data + 3);
+  if (size != 3) {
+    code = SPI2C_INMEM;
+    goto create_err_packet;
+  }
+  uint8_t i2c_adr = *(uint8_t*)(in->data + 1);
 	const struct i2c_dt_spec* i2c_dev = match_i2c_dt_adr(cfg, i2c_adr);
-	if (i2c_dev == NULL) { return SPI2C_NO_BUS; }
-	uint8_t read_buf[size];
-	if (i2c_read_dt(i2c_dev, read_buf, size)) { return SPI2C_I2C_RWERR; }
-	memcpy(data->rx_reg, read_buf, size);
-	return SPI2C_SUCCESS;
+	if (i2c_dev == NULL) { 
+    code = SPI2C_NO_BUS;
+    goto create_err_packet;
+  }
+
+	uint8_t read_buf[size + 1];
+	if (i2c_read_dt(i2c_dev, (uint8_t*)(read_buf + 1), size)) { 
+    code = SPI2C_I2C_RWERR;
+    goto create_err_packet;
+  }
+  read_buf[0] = code;
+  slave_packet_create(out, in->seqnum, size + 1, read_buf);
+  return;
+
+  create_err_packet:
+  slave_packet_create(out, in->seqnum, 1, &code);
+  return;   
 }
 
-// CMD: 0x00
-int spi2c_load(const struct device* dev, uint8_t* data) {
+// incoming packet fmt of reg cmd read --> |packet header|CMD:0x02 (1 byte)|reg adr (1 byte)|read size (1 byte)| 
+// outgoing packet fmt of reg cmd read --> |packet header|ERR CODE (1 byte)|read data (header.size - 1 bytes)|
+void spi2c_read_reg(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-	if (cmd_data[0] != SPI2C_CMD_READ_RX) { return SPI2C_SPI_RWERR; }
-	size_t size = (size_t)cmd_data[1];
+  uint8_t reg_adr = *(uint8_t*)(in->data + 2);  
+  uint8_t read_size = *(uint8_t*)(in->data + 3);
 
-	uint8_t data_buf_rx[size];
-	uint8_t data_buf_tx[size];
-	memcpy(data_buf_tx, data->rx_reg, size);
+  uint8_t code = SPI2C_SUCCESS;
+  uint8_t* reg = get_reg_data(data, reg_adr); 
+  if (reg == NULL) {
+    code = SPI2C_NO_REG;
+    goto create_err_packet;
+  }
+  if (sizeof(*reg) != read_size) {
+    code = SPI2C_INMEM;
+    goto create_err_packet;
+  }
+  uint8_t read_data[read_size + 1];
+  read_data[0] = code;
+  memcpy((uint8_t*)(read_data + 1), reg, read_size);
+  slave_packet_create(out, in->seqnum, read_size + 1, read_data);
+  return;
 
-	if (spi2c_transcieve_helper(&cfg->spi_dev, data_buf_rx, size, data_buf_tx, size)) {
-		return SPI2C_SPI_RWERR;
-	}
-	return SPI2C_SUCCESS;
+  create_err_packet:
+  slave_packet_create(out, in->seqnum, 1, &code); 
 }
 
-// CMD: 0x01
-int spi2c_write(const struct device* dev, uint8_t* data) {
+// incoming packet fmt of reg cmd write --> |packet header|CMD:0x03 (1 byte)|reg adr (1 byte)| write data (header.size - 2 bytes)| 
+// outgoing packet fmt of reg cmd write --> |packet header|ERR CODE (1 byte)|
+int spi2c_write_reg(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-}
 
-K_THREAD_STACK_DEFINE(cmd_handler_stack, THREAD_S_SIZE)
-static struct k_thread cmd_handler_thread;
-K_MSGQ_DEFINE(cmd_queue, sizeof(packet) + 64, 32, 4);
+  uint8_t code = SPI2C_SUCCESS;
+  uint8_t reg_adr = *(uint8_t*)(in->data + 1);
+  uint8_t* reg = get_reg_data(data, reg_adr);
+	if (reg == NULL) { 
+    code = SPI2C_NO_REG;
+    goto create_err_packet;
+  }
+  uint8_t* w_data = (uint8_t*)(in->data + 2); // beginning of data to write
+  uint8_t w_data_size = in->size - 2;
+  if (w_data_size != sizeof(*reg)) {
+    code = SPI2C_INMEM;
+    goto create_err_packet;
+  }
+  memcpy(reg, w_data, w_data_size);
+
+  create_err_packet:
+  slave_packet_create(out, in->seqnum, 1, &code);
+  return; 
+}
 
 void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
   struct device* dev = (struct device*)p1;
@@ -107,28 +179,38 @@ void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
   struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
 
   for (;;) {
-    struct packet* rx;
-    if (k_msgq_get(&cmd_queue, rx, K_FOREVER)) {
-      // should never get here
-      continue;
+    struct packet rx;
+    k_msgq_get(&cmd_queue, &rx, K_FOREVER);
+    uint8_t tx_buffer[MAX_PACKET_SIZE] = {0};
+    struct packet* tx = (struct packet*)tx_buffer
+    if (preform_crc8(rx) != rx->crc8) {
+      uint8_t code = SPI2C_INVAL_CRC;
+      slave_packet_create(tx, tx->seqnum, 1, &code);
+      goto finish;
     }
-    test_crc(rx);
-    struct packet tx;  
-    int code = 0; 
-    switch(rx->cmd) {
+    uint8_t cmd = rx->data[0];
+    switch(cmd) {
       case SPI2C_I2C_WRITE:
-        code = spi2c_i2c_write(dev, rx);
+        spi2c_i2c_write(dev, rx, tx);
         break;
       case SPI2C_I2C_READ:
-        code = spi2c_i2c_read(dev, rx, &tx);
+        spi2c_i2c_read(dev, rx, tx);
+        break;
+      case SPI2C_REG_WRITE:
+        spi2c_write_reg(dev, rx, tx);
+        break;
+      case SPI2C_REG_READ:
+        spi2c_read_reg(dev, rx, tx);
+        break;
+      default:
+        uint8_t code = SPI2C_INVAL_CMD;
+        slave_packet_create(tx, tx->seqnum, 1, &code);
         break;
     }
-    k_free(rx);
-    // this needs to be better fleshed out with an actual error system
-    if (code) { continue; }
 
-    struct packet* tx_queue = k_malloc(sizeof(struct packet) + tx.size);
-    k_msgq_put(&spi_queue, tx_queue, K_FOREVER);
+    finish:
+    k_free(rx);
+    k_msgq_put(&spi_queue, tx, K_FOREVER);
   }
 }
 
@@ -136,10 +218,6 @@ void spi2c_cmd_cb(const struct device* dev, int result, void* data) {
   struct k_sem* tranfer_fin  = (struct k_sem*)data;
   k_sem_take(transfer_fin, K_FOREVER);
 }
-
-K_THREAD_STACK_DEFINE(transceive_stack, THREAD_S_SIZE)
-static struct k_thread transceive_thread;
-K_MSGQ_DEFINE(spi_queue, sizeof(packet) + 64, 4);
 
 void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
   struct device* dev = (struct device*)p1;
@@ -152,30 +230,44 @@ void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
   struct spi_buf rx_buf;
   struct k_sem transfer_fin;
   k_sem_init(&tranfer_fin, 0, 1);
+  static uint8_t tx_dummy[MAX_PACKET_SIZE] = {0};
   for (;;) {
     struct packet tx;
     struct packet rx;
-    if (k_msgq_get(&spi_queue, &tx, K_NO_WAIT)) {
+    uint8_t tx_buffer[MAX_PACKET_SIZE] = {0};
+    uint8_t rx_buffer[MAX_PACKET_SIZE] = {0};
+    struct packet* tx = (struct packet*)tx_buffer;
+    struct packet* rx = (struct packet*)rx_buffer;
+    if (k_msgq_get(&spi_queue, tx, K_NO_WAIT)) {
       // there is a msg to send
       // pull gpio line
-       
+      gpio_pin_set_dt(&cfg->signal_gpio, 1); // set high 
+      init_buffer(rx_buf_set, rx_buf, sizeof(struct packet) + tx->size, (void*)rx);
+      init_buffer(tx_buf_set, rx_buf, sizeof(struct packet) + tx->size, (void*)tx);
+      spi_transceive_cb(cfg->spi_dev->bus, &cfg->spi_dev->config, tx_buf_set, rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin);
+      k_sem_take(&transfer_fin, K_FOREVER);
+      gpio_pin_set_dt(&cfg->signal_gpio, 0); // set low
+      k_free(tx);
+      continue;
     } 
-    
-    // start async transfer 
-    spi_transceive_cb(cfg->spi_dev->bus, &cfg->spi_dev->config, )
-
+    init_buffer(rx_buf_set, rx_buf, MAX_PACKET_SIZE, (void*)rx);
+    init_buffer(tx_buf_set, rx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
+    spi_transceive_cb(cfg->spi_dev->bus, &cfg->spi_dev->config, tx_buf_set, rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin);
     k_sem_take(&transfer_fin, K_FOREVER);
-    size_t msg_size = sizeof(struct packet) + rx.size;
-    struct packet* queue_rx = k_malloc(msg_size);
-    memcpy(queue_rx, &rx, msg_size);
     // waiting could be an issue, check in dbg
-    k_msgq_put(&cmd_queue, queue_rx, K_FOREVER);
+    k_msgq_put(&cmd_queue, rx, K_FOREVER);
   }
 }
 
-static int spi2c_begin_impl(const struct device* dev) {
-	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
+static uint8_t spi2c_init_devices(const struct spi2c_com_cfg* cfg) {
+  if (!gpio_is_ready_dt(&cfg->signal_gpio)) {
+    data->d_stat = SPI2C_UNINIT;
+    return SPI2C_UNINIT;
+  }
+  if (gpio_pin_configure_dt(&cfg->signal_gpio, GPIO_OUTPUT_INACTIVE)) {
+    data->d_stat = SPI2C_UNINIT;
+    return SPI2C_UNINIT;
+  }
 	for (int i = 0; i < cfg->i2c_dev_num; i++) {
 		if (!i2c_is_ready_dt(&cfg->i2c_devs[i])) {
 			data->d_stat = SPI2C_I2C_ERR;
@@ -186,11 +278,32 @@ static int spi2c_begin_impl(const struct device* dev) {
 		data->d_stat = SPI2C_SPI_ERR;
 		return SPI2C_SPI_ERR;
 	}
+	data->d_stat = SPI2C_INIT;
+	return SPI2C_INIT;
+}
+
+static uint8_t spi2c_begin_impl(const struct device* dev) {
+	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
+	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
+  if (spi2c_init_device(cfg) != SPI2C_INIT) {
+    return SPI2C_UNINIT;
+  }
 	if (data->d_stat == SPI2C_INIT) {
 		return SPI2C_INIT; // thread already started
 	}
-	data->d_stat = SPI2C_INIT;
-	return 0;
+  k_thread_create(&transceive_thread,
+                  transceive_stack,
+                  K_THREAD_STACK_SIZEOF(transceive_stack),
+                  spi2c_transceive_thread,
+                  dev, NULL, NULL,
+                  0, 0, K_NO_WAIT);
+  k_thread_create(&cmd_handler_thread,
+                  cmd_handler_stack,
+                  K_THREAD_STACK_SIZEOF(cmd_handler_stack),
+                  spi2c_cmd_handler_thread,
+                  dev, NULL, NULL,
+                  0, 0, K_NO_WAIT);
+	return SPI2C_INIT;
 }
 
 static const struct spi2c_driver spi2c_driver_impl = {
@@ -202,10 +315,7 @@ static const struct spi2c_driver spi2c_driver_impl = {
 
 #define SPI2C_DEFINE(inst)                                                \
 	static struct spi2c_com_data spi2c_com_data_##inst = {                  \
-    .tx_ready = ATOMIC_INIT(1),                                           \
 		.d_stat = SPI2C_UNINIT,                                               \
-		.c_stat = SPI2C_SUCCESS,                                              \
-		.rx_reg = {0},                                                        \
 	};                                                                      \
                                                                           \
 	BUILD_ASSERT(DT_INST_PROP_LEN(inst, i2c_devs) <= MAX_I2C_DEVS,          \
@@ -218,6 +328,7 @@ static const struct spi2c_driver spi2c_driver_impl = {
 						  SPI2C_I2C_ELEM_TO_SPEC)                                     \
 		},                                                                    \
 		.spi_dev = SPI_DT_SPEC_GET(DT_INST_PHANDLE(inst, spi_dev), SPI_OP),   \
+    .signal_gpio = GPIO_DT_SPEC_INST_GET(inst), signal_gpio),             \
 	};                                                                      \
                                                                           \
 	DEVICE_DT_INST_DEFINE(inst,                                             \
