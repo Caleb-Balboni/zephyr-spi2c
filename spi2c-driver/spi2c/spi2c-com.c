@@ -243,8 +243,8 @@ void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
       gpio_pin_set_dt(&cfg->signal_gpio, 0); // set low
       continue;
     } 
-    init_buffer(rx_buf_set, rx_buf, MAX_PACKET_SIZE, (void*)rx);
-    init_buffer(tx_buf_set, rx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
+    init_buffer(&rx_buf_set, &rx_buf, MAX_PACKET_SIZE, (void*)rx);
+    init_buffer(&tx_buf_set, &rx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
     spi_transceive_cb(cfg->spi_dev.bus, &cfg->spi_dev.config, tx_buf_set, rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin);
     k_sem_take(&transfer_fin, K_FOREVER);
     // waiting could be an issue, check in dbg
