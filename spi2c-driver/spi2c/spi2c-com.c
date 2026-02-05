@@ -105,11 +105,11 @@ void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* 
     goto create_err_packet;
   }
 
-	uint8_t read_buf[size + 1];
 	if (i2c_read_dt(i2c_dev, (uint8_t*)(read_buf + 1), size)) { 
     code = SPI2C_I2C_RWERR;
     goto create_err_packet;
   } else {
+	  uint8_t read_buf[size + 1];
     read_buf[0] = code;
     slave_packet_create(out, in->seqnum, size + 1, read_buf);
     return;
