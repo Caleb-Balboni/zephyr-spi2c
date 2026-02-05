@@ -285,7 +285,7 @@ static uint8_t spi2c_init_devices(const struct spi2c_com_cfg* cfg) {
 static uint8_t spi2c_begin_impl(const struct device* dev) {
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
-  if (spi2c_init_device(cfg) != SPI2C_INIT) {
+  if (spi2c_init_devices(cfg) != SPI2C_INIT) {
     return SPI2C_UNINIT;
   }
 	if (data->d_stat == SPI2C_INIT) {
@@ -328,7 +328,7 @@ static const struct spi2c_driver spi2c_driver_impl = {
 						  SPI2C_I2C_ELEM_TO_SPEC)                                     \
 		},                                                                    \
 		.spi_dev = SPI_DT_SPEC_GET(DT_INST_PHANDLE(inst, spi_dev), SPI_OP),   \
-    .signal_gpio = GPIO_DT_SPEC_INST_GET(inst, signal_gpio),              \
+    .signal_gpio = GPIO_DT_SPEC_INST_GET(inst, signal_gpios),             \
 	};                                                                      \
                                                                           \
 	DEVICE_DT_INST_DEFINE(inst,                                             \
