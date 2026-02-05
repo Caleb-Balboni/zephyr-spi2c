@@ -328,7 +328,7 @@ static const struct spi2c_driver spi2c_driver_impl = {
 						  SPI2C_I2C_ELEM_TO_SPEC)                                     \
 		},                                                                    \
 		.spi_dev = SPI_DT_SPEC_GET(DT_INST_PHANDLE(inst, spi_dev), SPI_OP),   \
-    .signal_gpio = GPIO_DT_SPEC_INST_GET(inst), signal_gpio),             \
+    .signal_gpio = GPIO_DT_SPEC_INST_GET(inst, signal_gpio),              \
 	};                                                                      \
                                                                           \
 	DEVICE_DT_INST_DEFINE(inst,                                             \

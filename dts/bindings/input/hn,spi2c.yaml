@@ -17,7 +17,7 @@ properties:
     type: phandle
     required: true
     description: the slave spi device from which all communication will occur
-  signal-gpio:
-    type: phandle
+  signal-gpios:
+    type: gpio
     required: true
     description: the gpio used to signal the master that data is ready
