@@ -259,7 +259,9 @@ void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
   }
 }
 
-static uint8_t spi2c_init_devices(const struct spi2c_com_cfg* cfg) {
+static uint8_t spi2c_init_devices(const struct device* dev) {
+	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
+	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
   if (!gpio_is_ready_dt(&cfg->signal_gpio)) {
     data->d_stat = SPI2C_UNINIT;
     return SPI2C_UNINIT;
@@ -285,7 +287,7 @@ static uint8_t spi2c_init_devices(const struct spi2c_com_cfg* cfg) {
 static uint8_t spi2c_begin_impl(const struct device* dev) {
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
-  if (spi2c_init_devices(cfg) != SPI2C_INIT) {
+  if (spi2c_init_devices(dev) != SPI2C_INIT) {
     return SPI2C_UNINIT;
   }
 	if (data->d_stat == SPI2C_INIT) {
