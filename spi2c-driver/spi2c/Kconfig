@@ -5,6 +5,6 @@ config HN_SPI2C
 	depends on SPI_SLAVE
   depends on GPIO
 	depends on !SPI_NXP_LPSPI_DMA
-	depends on !SPI_ASYNC
+	depends on SPI_ASYNC
 	help
 		enables the spi2c driver which automatically handles receiving and sending data from i2c devices
