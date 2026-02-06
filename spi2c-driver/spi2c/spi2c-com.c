@@ -28,6 +28,18 @@ static void init_buffer(struct spi_buf_set* buf_set, struct spi_buf* buf, size_t
 	return;
 }
 
+static void dbg_print_packet(struct packet* p) {
+  printk("packet crc: %d\n", p->crc8);
+  printk("packet init: %d\n", p->initiator);
+  printk("packet seq: %d\n", p->seqnum);
+  printk("packet size: %d\n", p->size);
+  printk("packet data: ");
+  for (int i = 0; i < p->size; i++) {
+    printk("0x%X ", p->data[i]);
+  }
+  printk("\n");
+}
+
 // return the crc of the packet
 static int preform_crc8(struct packet* p) {
   return 0; // for now the packet is always correct
@@ -122,8 +134,8 @@ void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* 
 void spi2c_read_reg(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
-  uint8_t reg_adr = *(uint8_t*)(in->data + 2);  
-  uint8_t read_size = *(uint8_t*)(in->data + 3);
+  uint8_t reg_adr = *(uint8_t*)(in->data + 1);  
+  uint8_t read_size = *(uint8_t*)(in->data + 2);
 
   uint8_t code = SPI2C_SUCCESS;
   uint8_t* reg = get_reg_data(data, reg_adr); 
@@ -180,12 +192,14 @@ void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
     k_msgq_get(&cmd_queue, rx, K_FOREVER);
     uint8_t tx_buffer[MAX_PACKET_SIZE] = {0};
     struct packet* tx = (struct packet*)tx_buffer;
+    /*
     if (preform_crc8(rx) != rx->crc8) {
       uint8_t code = SPI2C_INVAL_CRC;
       slave_packet_create(tx, tx->seqnum, 1, &code);
       goto finish;
     }
-    uint8_t cmd = rx->data[0];
+    */
+    uint8_t cmd = *(uint8_t*)rx->data;
     switch(cmd) {
       case SPI2C_I2C_WRITE:
         spi2c_i2c_write(dev, rx, tx);
@@ -213,7 +227,7 @@ void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
 void spi2c_cmd_cb(const struct device* dev, int result, void* data) {
   struct k_sem* transfer_fin  = (struct k_sem*)data;
   printk("callback happened\n");
-  k_sem_take(transfer_fin, K_FOREVER);
+  k_sem_give(transfer_fin);
 }
 
 void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
@@ -234,19 +248,24 @@ void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
     uint8_t rx_buffer[MAX_PACKET_SIZE] = {0};
     struct packet* tx = (struct packet*)tx_buffer;
     struct packet* rx = (struct packet*)rx_buffer;
-    if (k_msgq_get(&spi_queue, tx, K_NO_WAIT)) {
+    if (k_msgq_get(&spi_queue, tx, K_NO_WAIT) == 0) {
       // there is a msg to send
       // pull gpio line
-      gpio_pin_set_dt(&cfg->signal_gpio, 1); // set high 
+      printk("sending response\n");
+      dbg_print_packet(tx);
       init_buffer(&rx_buf_set, &rx_buf, sizeof(struct packet) + tx->size, (void*)rx);
-      init_buffer(&tx_buf_set, &rx_buf, sizeof(struct packet) + tx->size, (void*)tx);
+      init_buffer(&tx_buf_set, &tx_buf, sizeof(struct packet) + tx->size, (void*)tx);
       spi_transceive_cb(cfg->spi_dev.bus, &cfg->spi_dev.config, &tx_buf_set, &rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin);
+      if (gpio_pin_set_dt(&cfg->signal_gpio, 1)) {
+        printk("failed to set gpio pin\n");
+      }  
       k_sem_take(&transfer_fin, K_FOREVER);
       gpio_pin_set_dt(&cfg->signal_gpio, 0); // set low
       continue;
     } 
     init_buffer(&rx_buf_set, &rx_buf, MAX_PACKET_SIZE, (void*)rx);
-    init_buffer(&tx_buf_set, &rx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
+    init_buffer(&tx_buf_set, &tx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
+    dbg_print_packet(tx);
     if (code = spi_transceive_cb(cfg->spi_dev.bus, &cfg->spi_dev.config, &tx_buf_set, &rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin)) {
       printk("transceive failed, code: %d\n", code);
     }
@@ -256,6 +275,50 @@ void spi2c_transceive_thread(void* p1, void* p2, void* p3) {
   }
 }
 
+void spi2c_transceive_thread2(void* p1, void* p2, void* p3) {
+  printk("got here");
+  struct device* dev = (struct device*)p1;
+  struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
+  struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
+
+  struct spi_buf_set tx_buf_set;
+  struct spi_buf_set rx_buf_set;
+  struct spi_buf tx_buf;
+  struct spi_buf rx_buf;
+  struct k_sem transfer_fin;
+  k_sem_init(&transfer_fin, 0, 1);
+  static uint8_t tx_dummy[MAX_PACKET_SIZE] = {0};
+  for (;;) {
+    int code;
+    uint8_t tx_buffer[MAX_PACKET_SIZE] = {0};
+    uint8_t rx_buffer[MAX_PACKET_SIZE] = {0};
+    struct packet* tx = (struct packet*)tx_buffer;
+    struct packet* rx = (struct packet*)rx_buffer;
+    init_buffer(&rx_buf_set, &rx_buf, MAX_PACKET_SIZE, (void*)rx);
+    init_buffer(&tx_buf_set, &tx_buf, MAX_PACKET_SIZE, (void*)tx_dummy);
+    if (code = spi_transceive_cb(cfg->spi_dev.bus, &cfg->spi_dev.config, &tx_buf_set, &rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin)) {
+      printk("transceive failed, code: %d\n", code);
+    }
+    k_sem_take(&transfer_fin, K_FOREVER);
+    // waiting could be an issue, check in dbg
+    printk("got past the first cb\n");
+    k_msgq_put(&cmd_queue, rx, K_FOREVER);
+    k_msgq_get(&spi_queue, tx, K_FOREVER);
+    printk("got a message back\n");
+      // there is a msg to send
+      // pull gpio line
+    init_buffer(&rx_buf_set, &rx_buf, sizeof(struct packet) + tx->size, (void*)rx);
+    init_buffer(&tx_buf_set, &tx_buf, sizeof(struct packet) + tx->size, (void*)tx);
+    spi_transceive_cb(cfg->spi_dev.bus, &cfg->spi_dev.config, &tx_buf_set, &rx_buf_set, spi2c_cmd_cb, (void*)&transfer_fin);
+    if (gpio_pin_set_dt(&cfg->signal_gpio, 1)) {
+      printk("failed to set gpio pin\n");
+    }  
+    k_sem_take(&transfer_fin, K_FOREVER);
+    gpio_pin_set_dt(&cfg->signal_gpio, 0); // set low
+  } 
+}
+
+
 static uint8_t spi2c_init_devices(const struct device* dev) {
 	struct spi2c_com_data* data = (struct spi2c_com_data*)dev->data;
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
@@ -263,10 +326,11 @@ static uint8_t spi2c_init_devices(const struct device* dev) {
     data->d_stat = SPI2C_UNINIT;
     return SPI2C_UNINIT;
   }
-  if (gpio_pin_configure_dt(&cfg->signal_gpio, GPIO_OUTPUT_LOW)) {
+  if (gpio_pin_configure_dt(&cfg->signal_gpio, GPIO_OUTPUT_INACTIVE)) {
     data->d_stat = SPI2C_UNINIT;
     return SPI2C_UNINIT;
   }
+  gpio_pin_set_dt(&cfg->signal_gpio, 0);
 	for (int i = 0; i < cfg->i2c_dev_num; i++) {
 		if (!i2c_is_ready_dt(&cfg->i2c_devs[i])) {
 			data->d_stat = SPI2C_I2C_ERR;
@@ -277,7 +341,6 @@ static uint8_t spi2c_init_devices(const struct device* dev) {
 		data->d_stat = SPI2C_SPI_ERR;
 		return SPI2C_SPI_ERR;
 	}
-	data->d_stat = SPI2C_INIT;
 	return SPI2C_INIT;
 }
 
@@ -302,6 +365,8 @@ static uint8_t spi2c_begin_impl(const struct device* dev) {
                   spi2c_cmd_handler_thread,
                   dev, NULL, NULL,
                   0, 0, K_NO_WAIT);
+
+  data->d_stat = SPI2C_INIT;
 	return SPI2C_INIT;
 }
 

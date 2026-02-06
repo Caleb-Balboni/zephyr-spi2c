@@ -35,8 +35,8 @@ typedef enum {
 typedef enum {
 	SPI2C_I2C_WRITE     = 0x00,
 	SPI2C_I2C_READ		  = 0x01,
-  SPI2C_REG_WRITE     = 0x02,
-  SPI2C_REG_READ      = 0x03,
+  SPI2C_REG_READ      = 0x02,
+  SPI2C_REG_WRITE     = 0x03,
 } spi2c_cmd;
 
 struct spi2c_com_cfg {
