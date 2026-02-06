@@ -212,6 +212,7 @@ void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
 
 void spi2c_cmd_cb(const struct device* dev, int result, void* data) {
   struct k_sem* transfer_fin  = (struct k_sem*)data;
+  printk("callback happened\n");
   k_sem_take(transfer_fin, K_FOREVER);
 }
 
