@@ -263,7 +263,7 @@ static uint8_t spi2c_init_devices(const struct device* dev) {
     data->d_stat = SPI2C_UNINIT;
     return SPI2C_UNINIT;
   }
-  if (gpio_pin_configure_dt(&cfg->signal_gpio, GPIO_OUTPUT_INACTIVE)) {
+  if (gpio_pin_configure_dt(&cfg->signal_gpio, GPIO_OUTPUT_LOW)) {
     data->d_stat = SPI2C_UNINIT;
     return SPI2C_UNINIT;
   }
