@@ -9,6 +9,10 @@ properties:
     type: phandles
     required: true
     description: a list of all i2c devices this driver can interact with
+  device-amt:
+    type: int
+    required: true
+    description: the amount of devices being used
   spi-dev:
     type: phandle
     required: true

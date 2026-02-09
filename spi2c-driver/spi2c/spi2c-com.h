@@ -13,18 +13,18 @@
 typedef enum {
 	SPI2C_UNINIT,		  // the driver is not initalized
 	SPI2C_INIT,		    // the driver is initalized
-	SPI2C_I2C_ERR,		// one or more i2c devices failed to init
+	SPI2C_DEV_ERR,		// one or more dev devices failed to init
 	SPI2C_SPI_ERR,		// the spi device failed to init
 } spi2c_driver_state;
 
 typedef enum {
 	SPI2C_SUCCESS,		// a command was successfully executed
-	SPI2C_NO_BUS,		  // the i2c reg being read or read to does not exist
+	SPI2C_NO_BUS,		  // the dev reg being read or read to does not exist
   SPI2C_NO_REG,     // the reg being read or written to does not exist
 	SPI2C_INMEM,		  // the size of the data packet was incorrect for the cmd
 	SPI2C_SPI_RWERR,	// a read/write error occured in the spi device
   SPI2C_INVAL_CRC,  // the crc for the command to the slave was invalid
-	SPI2C_I2C_RWERR,	// a read/write error occured in the i2c device
+	SPI2C_DEV_RWERR,	// a read/write error occured in the i2c device
 	SPI2C_INVAL_CMD,	// a cmd recieved by the device was invalid
 } spi2c_cmd_state;
 
@@ -33,8 +33,9 @@ typedef enum {
 } spi2c_reg_adr;
 
 typedef enum {
-	SPI2C_I2C_WRITE     = 0x00,
-	SPI2C_I2C_READ		  = 0x01,
+	SPI2C_DEV_WRITE     = 0x00,
+	SPI2C_DEV_READ		  = 0x01,
+
   SPI2C_REG_READ      = 0x02,
   SPI2C_REG_WRITE     = 0x03,
 } spi2c_cmd;
@@ -42,7 +43,8 @@ typedef enum {
 struct spi2c_com_cfg {
   const struct gpio_dt_spec signal_gpio;
   const struct device* custom_devs[MAX_DEVS]; // custom devices with drivers
-	const struct spi_dt_spec spi_dev; // spi
+  uint8_t dev_amt;
+	const struct spi_dt_spec spi_dev;
 };
 
 // packet of size + 4 bytes
@@ -66,7 +68,7 @@ struct spi2c_com_data {
 // handles the device write cmd (impl specific), which writes data from the master to the specified device
 // incoming packet fmt of dev cmd write --> |packet header|CMD:0x00 (1 byte)|adr (1 byte)| write data (header.size - 2 bytes)| 
 // outgoing packet fmt of dev cmd write --> |packet header|ERR CODE (1 byte)|
-// @param dev - the slave spi + i2c device interface
+// @param dev - the slave spi + device interface
 // @param in - the input packet containing the data to write
 // @param out - data returned to master by write (in this case just the status of the cmd)
 void spi2c_dev_write(const struct device* dev, struct packet* in, struct packet* out);
@@ -74,7 +76,7 @@ void spi2c_dev_write(const struct device* dev, struct packet* in, struct packet*
 // handles the device read cmd (impl specific), gets data from the device to be passed back to the master
 // incoming packet fmt of dev cmd read --> |packet header|CMD:0x01 (1 byte)|adr (1 byte)|data (impl specific)| 
 // outgoing packet fmt of dev cmd read --> |packet header|ERR CODE (1 byte)|read data (impl specific)|
-// @param dev - the slave spi + i2c device interface
+// @param dev - the slave spi + device interface
 // @param in - the input packet defining the kind and area of which to grab data
 // @param out - the status of the command followed by the read data
 void spi2c_dev_read(const struct device* dev, struct packet* in, struct packet* out);
@@ -82,7 +84,7 @@ void spi2c_dev_read(const struct device* dev, struct packet* in, struct packet* 
 // handles the read reg cmd, which reads the data from a specified register back to the master
 // incoming packet fmt of reg cmd read --> |packet header|CMD:0x02 (1 byte)|reg adr (1 byte)|read size (1 byte)| 
 // outgoing packet fmt of reg cmd read --> |packet header|ERR CODE (1 byte)|read data (header.size - 1 bytes)|
-// @param dev - the slave spi + i2c device interface
+// @param dev - the slave spi + device interface
 // @param in - the input packet defining what register to read from and how much data
 // @param out - the status of the command followed by the output packet to give back to the master
 void spi2c_read_reg(const struct device* dev, struct packet* in, struct packet* out);
@@ -90,7 +92,7 @@ void spi2c_read_reg(const struct device* dev, struct packet* in, struct packet* 
 // handles the write register cmd, which writes data from the master to a register
 // incoming packet fmt of reg cmd write --> |packet header|CMD:0x03 (1 byte)|reg adr (1 byte)| write data (header.size - 2 bytes)| 
 // outgoing packet fmt of reg cmd write --> |packet header|ERR CODE (1 byte)|
-// @param dev - the slave spi + i2c device interface
+// @param dev - the slave spi + device interface
 // @param in - the input packet containing the information about which register and the data to write
 // @param out - the status of the command followed by the read data from the register
 void spi2c_write_reg(const struct device* dev, struct packet* in, struct packet* out);
@@ -103,7 +105,7 @@ struct spi2c_driver {
 
 // begins worker threads that wait for incoming master commands to read and write data
 // from registers and i2c devices
-// @param dev - the slave spi + i2c device interface
+// @param dev - the slave spi + device interface
 // @return - 0 on success else a standard zephyr error code
 static inline int spi2c_begin_com(const struct device* dev) {
   struct spi2c_driver* api = (struct spi2c_driver*)dev->api;

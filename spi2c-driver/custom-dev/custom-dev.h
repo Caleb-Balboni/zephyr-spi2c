@@ -3,9 +3,18 @@
 #include <zephyr/device.h>
 #include <spi2c-com.h>
 
+/*
+ * The api interface for all 'custom' device drivers (ex: i2c, uart). Implementing this api allows the main spi2c's 
+ * read and write functions to call the custom functions of the particular devices implementation.
+ */
+
+// read and write must return an error code defined in spi2c-com.h,
+// for example SPI2C_SUCCESS if the cmd was successfull
 typedef uint8_t (*write_custom_dev_t)(const struct device* dev, struct packet* in, struct packet* out);
+
 typedef uint8_t (*read_custom_dev_t)(const struct device* dev, struct packet* in, struct packet* out);
-typedef uint8_T (*get_custom_dev_adr_t)(const struct device* dev);
+
+typedef uint8_t (*get_custom_dev_adr_t)(const struct device* dev);
 
 struct custom_dev_api {
   write_custom_dev_t write;
