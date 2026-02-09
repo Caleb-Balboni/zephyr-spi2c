@@ -5,14 +5,10 @@ compatible: "hn,spi2c"
 include: base.yaml
 
 properties:
-  i2c-devs:
+  custom-devs:
     type: phandles
     required: true
     description: a list of all i2c devices this driver can interact with
-  i2c-dev-num:
-    type: int
-    required: true
-    description: the number of i2c devices to use (must be less than 16)
   spi-dev:
     type: phandle
     required: true

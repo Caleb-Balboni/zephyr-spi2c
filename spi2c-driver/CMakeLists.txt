@@ -1,1 +1,2 @@
 add_subdirectory_ifdef(CONFIG_HN_SPI2C spi2c)
+add_subdirectory_ifdef(CONFIG_HN_SPI2C custom-dev)

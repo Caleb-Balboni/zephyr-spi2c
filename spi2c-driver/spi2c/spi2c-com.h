@@ -6,7 +6,7 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
 
-#define MAX_I2C_DEVS 8
+#define MAX_DEVS 8
 #define MAX_PACKET_SIZE 255
 
 // register values for driver register (uint8_t d_stat)
@@ -40,9 +40,8 @@ typedef enum {
 } spi2c_cmd;
 
 struct spi2c_com_cfg {
-	uint8_t i2c_dev_num; // the number of i2c devices
   const struct gpio_dt_spec signal_gpio;
-	const struct i2c_dt_spec i2c_devs[MAX_I2C_DEVS]; // i2c devices
+  const struct device* custom_devs[MAX_DEVS]; // custom devices with drivers
 	const struct spi_dt_spec spi_dev; // spi
 };
 
@@ -64,21 +63,21 @@ struct spi2c_com_data {
 // NOTE: these functions are only to be used by the spi slave, they are only induced by the master
 // and recieved by these functions
 
-// handles the i2c write cmd, which writes data from the master to the specified i2c device
-// incoming packet fmt of i2c cmd write --> |packet header|CMD:0x00 (1 byte)|i2c adr (1 byte)| write data (header.size - 2 bytes)| 
-// outgoing packet fmt of i2c cmd write --> |packet header|ERR CODE (1 byte)|
+// handles the device write cmd (impl specific), which writes data from the master to the specified device
+// incoming packet fmt of dev cmd write --> |packet header|CMD:0x00 (1 byte)|adr (1 byte)| write data (header.size - 2 bytes)| 
+// outgoing packet fmt of dev cmd write --> |packet header|ERR CODE (1 byte)|
 // @param dev - the slave spi + i2c device interface
 // @param in - the input packet containing the data to write
 // @param out - data returned to master by write (in this case just the status of the cmd)
-void spi2c_i2c_write(const struct device* dev, struct packet* in, struct packet* out);
+void spi2c_dev_write(const struct device* dev, struct packet* in, struct packet* out);
 
-// handles the i2c read cmd, gets data from the i2c device to be passed back to the master
-// incoming packet fmt of i2c cmd read --> |packet header|CMD:0x01 (1 byte)|i2c adr (1 byte)|read size (1 byte)| 
-// outgoing packet fmt of i2c cmd read --> |packet header|ERR CODE (1 byte)|read data (header.size - 1 bytes)|
+// handles the device read cmd (impl specific), gets data from the device to be passed back to the master
+// incoming packet fmt of dev cmd read --> |packet header|CMD:0x01 (1 byte)|adr (1 byte)|data (impl specific)| 
+// outgoing packet fmt of dev cmd read --> |packet header|ERR CODE (1 byte)|read data (impl specific)|
 // @param dev - the slave spi + i2c device interface
 // @param in - the input packet defining the kind and area of which to grab data
 // @param out - the status of the command followed by the read data
-void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* out);
+void spi2c_dev_read(const struct device* dev, struct packet* in, struct packet* out);
 
 // handles the read reg cmd, which reads the data from a specified register back to the master
 // incoming packet fmt of reg cmd read --> |packet header|CMD:0x02 (1 byte)|reg adr (1 byte)|read size (1 byte)| 

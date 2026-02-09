@@ -6,6 +6,7 @@
 #include <zephyr/device.h>
 #include <stdbool.h>
 #include <spi2c-com.h>
+#include <custom-dev.h>
 
 #define SPI_OP (SPI_OP_MODE_SLAVE | SPI_MODE_CPOL | SPI_MODE_CPHA | \
 		SPI_WORD_SET(8) | SPI_TRANSFER_MSB | SPI_LINES_SINGLE)
@@ -55,12 +56,12 @@ static void slave_packet_create(struct packet* out, uint8_t seq, uint16_t size, 
 }
 
 // tries to find a i2c device that corresponds with the given i2c address
-static const struct i2c_dt_spec* match_i2c_dt_adr(struct spi2c_com_cfg* cfg, uint8_t addr) {
+static const struct device* match_dev_adr(struct spi2c_com_cfg* cfg, uint8_t addr) {
 
-	for (uint8_t i = 0; i < cfg->i2c_dev_num; i++) {
-		const struct i2c_dt_spec* i2c_dev = &cfg->i2c_devs[i];
-		if (i2c_dev->addr == addr) {
-			return i2c_dev;
+	for (uint8_t i = 0; i < cfg->custom_devs; i++) {
+		const struct device* dev = &cfg->custom_devs[i];
+		if (spi2c_get_custom_dev_adr(dev) == addr) {
+			return dev;
 		}
 	}
 	return NULL;
@@ -77,55 +78,40 @@ static uint8_t* get_reg_data(struct spi2c_com_data* data, uint8_t reg) {
 
 // incoming packet fmt of i2c cmd write --> |packet header|CMD:0x00 (1 byte)|i2c adr (1 byte)| write data (header.size - 2 bytes)| 
 // outgoing packet fmt of i2c cmd write --> |packet header|ERR CODE (1 byte)|
-void spi2c_i2c_write(const struct device* dev, struct packet* in, struct packet* out) {
+void spi2c_dev_write(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 
+  uint8_t dev_adr = *(uint8_t*)(in->data + 1);
+	const struct device* custom_dev = match_dev_adr(cfg, adr);
   uint8_t code = SPI2C_SUCCESS;
-  uint8_t i2c_adr = *(uint8_t*)(in->data + 1);
-	const struct i2c_dt_spec* i2c_dev = match_i2c_dt_adr(cfg, i2c_adr);
-	if (i2c_dev == NULL) { 
+  if (custom_dev == NULL) {
     code = SPI2C_NO_BUS;
-    goto create_err_packet;
+    slave_packet_create(out, in->seqnum, 1, &code);
+    return;
+  } 
+  uint8_t code = custom_dev->api->write(in, out);
+  if (code != SPI2C_SUCCESS) {
+    slave_packet_create(out, in->seqnum, 1, &code);
   }
-  uint8_t* w_data = (uint8_t*)(in->data + 2); // beginning of data to write
-  uint8_t w_data_size = in->size - 2;
-	if (i2c_write_dt(i2c_dev, w_data, w_data_size)) { 
-    code = SPI2C_I2C_RWERR;
-  }
-  create_err_packet:
-  slave_packet_create(out, in->seqnum, 1, &code);
   return;   
 }
 
-// incoming packet fmt of i2c cmd read --> |packet header|CMD:0x01 (1 byte)|i2c adr (1 byte)|read size (1 byte)| 
-// outgoing packet fmt of i2c cmd read --> |packet header|ERR CODE (1 byte)|read data (header.size - 1 bytes)|
-void spi2c_i2c_read(const struct device* dev, struct packet* in, struct packet* out) {
+// incoming packet fmt of dev cmd read --> |packet header|CMD:0x01 (1 byte)|i2c adr (1 byte)|data (impl specific)| 
+// outgoing packet fmt of dev cmd read --> |packet header|ERR CODE (1 byte)|data (impl specific)|
+void spi2c_dev_read(const struct device* dev, struct packet* in, struct packet* out) {
 	struct spi2c_com_cfg* cfg = (struct spi2c_com_cfg*)dev->config;
 
   uint8_t code = SPI2C_SUCCESS;
-  uint8_t size = *(uint8_t*)(in->data + 3);
-	uint8_t read_buf[size + 1];
-  if (size != 3) {
-    code = SPI2C_INMEM;
-    goto create_err_packet;
-  }
-  uint8_t i2c_adr = *(uint8_t*)(in->data + 1);
-	const struct i2c_dt_spec* i2c_dev = match_i2c_dt_adr(cfg, i2c_adr);
-	if (i2c_dev == NULL) { 
+  uint8_t dev_adr = *(uint8_t*)(in->data + 1);
+	const struct device* custom_dev = match_dev_adr(cfg, dev_adr);
+	if (dev == NULL) { 
     code = SPI2C_NO_BUS;
-    goto create_err_packet;
+    slave_packet_create(out, in->seqnum, 1, &code);
   }
-
-  read_buf[0] = code;
-	if (i2c_read_dt(i2c_dev, (uint8_t*)(read_buf + 1), size)) { 
-    code = SPI2C_I2C_RWERR;
-    goto create_err_packet;
+  code = spi2c_custom_dev_read(custom_dev, in, out);
+  if (code != SPI2C_SUCCESS) {
+    slave_packet_create(out, in->seqnum, 1, &code);
   }
-  slave_packet_create(out, in->seqnum, size + 1, read_buf);
-  return;
-
-  create_err_packet:
-  slave_packet_create(out, in->seqnum, 1, &code);
   return;   
 }
 
@@ -202,10 +188,10 @@ void spi2c_cmd_handler_thread(void* p1, void* p2, void* p3) {
     uint8_t cmd = *(uint8_t*)rx->data;
     switch(cmd) {
       case SPI2C_I2C_WRITE:
-        spi2c_i2c_write(dev, rx, tx);
+        spi2c_dev_write(dev, rx, tx);
         break;
       case SPI2C_I2C_READ:
-        spi2c_i2c_read(dev, rx, tx);
+        spi2c_dev_read(dev, rx, tx);
         break;
       case SPI2C_REG_WRITE:
         spi2c_write_reg(dev, rx, tx);
@@ -374,8 +360,8 @@ static const struct spi2c_driver spi2c_driver_impl = {
 	.spi2c_begin = spi2c_begin_impl,
 };
 
-#define SPI2C_I2C_ELEM_TO_SPEC(node_id, prop, idx) \
-	[idx] = I2C_DT_SPEC_GET(DT_PHANDLE_BY_IDX(node_id, prop, idx)),
+#define SPI2C_ELEM_TO_DEV(node_id, prop, idx) \
+	[idx] = DEVICE_DT_GET(DT_PHANDLE_BY_IDX(node_id, prop, idx)),
 
 #define SPI2C_DEFINE(inst)                                                \
 	static struct spi2c_com_data spi2c_com_data_##inst = {                  \
@@ -386,10 +372,9 @@ static const struct spi2c_driver spi2c_driver_impl = {
 		     "i2c-devs has more than MAX_I2C_DEVS entries");                  \
                                                                           \
 	static const struct spi2c_com_cfg spi2c_com_cfg_##inst = {              \
-		.i2c_dev_num = (uint8_t)DT_PROP_LEN(DT_DRV_INST(inst), i2c_devs),     \
-		.i2c_devs = {                                                         \
-			DT_FOREACH_PROP_ELEM(DT_DRV_INST(inst), i2c_devs,                   \
-						  SPI2C_I2C_ELEM_TO_SPEC)                                     \
+		.custom_devs = {                                                      \
+			DT_FOREACH_PROP_ELEM(DT_DRV_INST(inst), custom_devs,                \
+						  SPI2C_ELEM_TO_DEV)                                          \
 		},                                                                    \
 		.spi_dev = SPI_DT_SPEC_GET(DT_INST_PHANDLE(inst, spi_dev), SPI_OP),   \
     .signal_gpio = GPIO_DT_SPEC_INST_GET(inst, signal_gpios),             \
